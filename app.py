@@ -132,14 +132,16 @@ class VisualizationHandler:
 class CustomPythonAstREPLTool(PythonAstREPLTool):
     """Custom Python AST REPL Tool that captures and displays matplotlib figures in Streamlit"""
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Ensure locals is set up properly
+        if self.locals is None:
+            self.locals = {}
+    
     def _run(self, query: str) -> str:
         """Run the query in the Python REPL and capture the result."""
         try:
-            # Ensure locals is initialized and persistent
-            if self.locals is None:
-                self.locals = {}
-            
-            # Make sure matplotlib and seaborn are always available
+            # Ensure all required libraries and df are in locals before execution
             if 'plt' not in self.locals:
                 self.locals['plt'] = plt
             if 'sns' not in self.locals:
@@ -148,6 +150,10 @@ class CustomPythonAstREPLTool(PythonAstREPLTool):
                 self.locals['np'] = np
             if 'pd' not in self.locals:
                 self.locals['pd'] = pd
+            
+            # Debug: Check if df exists
+            if 'df' not in self.locals:
+                return "❌ Error: DataFrame 'df' is not available in the execution context. Please reload the data."
             
             # Execute the code using parent method
             result = super()._run(query)
@@ -168,7 +174,7 @@ class CustomPythonAstREPLTool(PythonAstREPLTool):
             return result
         
         except Exception as e:
-            error_message = f"Error executing code: {str(e)}"
+            error_message = f"❌ Error executing code: {str(e)}"
             st.error(error_message)
             return error_message
 
@@ -318,6 +324,12 @@ class LLMAgent:
 You are an expert data analyst with deep experience across industries. You approach every dataset with curiosity and rigor, asking the right questions to uncover meaningful insights. Your role is to be a trusted analytical partner who transforms raw data into clear, actionable intelligence.
 
     which is a data analysis and visualization expert that helps users analyze CSV data using Python, pandas, and matplotlib.
+    
+    **CRITICAL ENVIRONMENT SETUP:**
+    - The DataFrame 'df' is ALWAYS pre-loaded and available in your Python environment
+    - Libraries are pre-imported: plt (matplotlib.pyplot), sns (seaborn), pd (pandas), np (numpy)
+    - You can use these directly without checking if they exist
+    - When creating visualizations, keep code simple and flat (no deep nesting or complex conditionals)
     
     You have access to a pandas DataFrame named 'df' with the following columns:
     {df_schema}
@@ -689,15 +701,13 @@ class DataAnalysisAgent(LLMAgent):
     1. Run validation protocol above
     2. Use only validated pandas operations with error handling:
     ```python
-    # Always verify columns exist
-    if 'column_name' in df.columns:
-        result = df['column_name'].describe()
-    else:
-        print("Column 'column_name' not found")
+    # Direct column access - df is always available
+    result = df['column_name'].describe()
+    print(result)
     
-    # Group operations with verification
-    if all(col in df.columns for col in ['group_col', 'value_col']):
-        result = df.groupby('group_col')['value_col'].agg(['mean', 'count'])
+    # Group operations
+    result = df.groupby('group_col')['value_col'].agg(['mean', 'count'])
+    print(result)
     ```
     3. Report exact numerical findings only
     4. **NO visualizations unless explicitly requested**
@@ -707,19 +717,26 @@ class DataAnalysisAgent(LLMAgent):
     
     **CRITICAL: Only execute visualization code ONCE. Do NOT retry or regenerate plots.**
     
+    **CODE FORMATTING REQUIREMENTS:**
+    - Use 4-space indentation consistently
+    - NO tabs, only spaces
+    - Keep code simple and flat (minimal nesting)
+    - Always put imports at the very top
+    - Use df directly without existence checks
+    - Avoid complex conditional logic in visualization code
+    
     **Distribution (Numeric):**
     ```python
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    if 'column' in df.columns and df['column'].dtype in ['int64', 'float64']:
-        plt.figure(figsize=(10, 6))
-        sns.histplot(data=df, x='column', bins=30, kde=True, color='teal')
-        plt.title(f'Distribution of column', fontsize=16)
-        plt.xlabel('Column Name', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.grid(axis='y', linestyle='--', alpha=0.6)
-        plt.tight_layout()
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=df, x='column', bins=30, kde=True, color='teal')
+    plt.title('Distribution of column', fontsize=16)
+    plt.xlabel('Column Name', fontsize=12)
+    plt.ylabel('Frequency', fontsize=12)
+    plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.tight_layout()
     ```
     
     **Categories (Top 10 only):**
@@ -727,13 +744,12 @@ class DataAnalysisAgent(LLMAgent):
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    if 'column' in df.columns:
-        top_10 = df['column'].value_counts().head(10)
-        plt.figure(figsize=(10, 6))
-        sns.barplot(x=top_10.values, y=top_10.index, palette='viridis')
-        plt.title(f'Top 10 Values in column', fontsize=16)
-        plt.xlabel('Count', fontsize=12)
-        plt.tight_layout()
+    top_10 = df['column'].value_counts().head(10)
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=top_10.values, y=top_10.index, palette='viridis')
+    plt.title('Top 10 Values in column', fontsize=16)
+    plt.xlabel('Count', fontsize=12)
+    plt.tight_layout()
     ```
     
     **Correlation Matrix:**
@@ -742,12 +758,11 @@ class DataAnalysisAgent(LLMAgent):
     import seaborn as sns
     
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    if len(numeric_cols) >= 2:
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(df[numeric_cols].corr(), annot=True, fmt='.2f', 
-                    cmap='coolwarm', vmin=-1, vmax=1, square=True)
-        plt.title('Correlation Matrix', fontsize=16)
-        plt.tight_layout()
+    corr_data = df[numeric_cols].corr()
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(corr_data, annot=True, fmt='.2f', cmap='coolwarm', vmin=-1, vmax=1, square=True)
+    plt.title('Correlation Matrix', fontsize=16)
+    plt.tight_layout()
     ```
     
     **Scatter Plot:**
@@ -755,15 +770,13 @@ class DataAnalysisAgent(LLMAgent):
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    if all(col in df.columns for col in ['x_col', 'y_col']):
-        if all(df[col].dtype in ['int64', 'float64'] for col in ['x_col', 'y_col']):
-            plt.figure(figsize=(10, 6))
-            sns.scatterplot(data=df, x='x_col', y='y_col', alpha=0.6)
-            plt.title(f'x_col vs y_col', fontsize=16)
-            plt.xlabel('X Column', fontsize=12)
-            plt.ylabel('Y Column', fontsize=12)
-            plt.grid(True, linestyle='--', alpha=0.6)
-            plt.tight_layout()
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=df, x='x_col', y='y_col', alpha=0.6)
+    plt.title('x_col vs y_col', fontsize=16)
+    plt.xlabel('X Column', fontsize=12)
+    plt.ylabel('Y Column', fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
     ```
     
     **IMPORTANT VISUALIZATION RULES:**
@@ -802,13 +815,12 @@ class DataAnalysisAgent(LLMAgent):
     ## ERROR HANDLING TEMPLATE
     ```python
     try:
-        if 'required_column' in df.columns:
-            result = df['required_column'].operation()
-            print(f"Result: result")
-        else:
-            print("Required column not found in dataset")
+        result = df['required_column'].operation()
+        print(f"Result: {result}")
+    except KeyError:
+        print("Column not found in dataset")
     except Exception as e:
-        print(f"Analysis error: e")
+        print(f"Analysis error: {e}")
     ```
     
     ## RESPONSE STRUCTURE
@@ -848,27 +860,32 @@ class DataAnalysisAgent(LLMAgent):
     ```
     
     **Step 2: Create ONE Visualization (Execute ONCE)**
+    
+    CRITICAL FORMATTING RULES:
+    - Use consistent 4-space indentation (NO TABS)
+    - Keep code blocks simple and flat (avoid deep nesting)
+    - Always use `df` directly without checking if it exists first
+    - Put imports on separate lines at the very start
+    
     ```python
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    # Validate column exists
-    if 'column_name' in df.columns and df['column_name'].dtype in ['int64', 'float64']:
-        # Create the visualization
-        plt.figure(figsize=(10, 6))
-        sns.histplot(data=df, x='column_name', bins=30, kde=True, color='teal')
-        
-        # Professional styling
-        plt.title('Distribution of Column Name', fontsize=16)
-        plt.xlabel('Column Name (Units)', fontsize=12)
-        plt.ylabel('Frequency', fontsize=12)
-        plt.grid(axis='y', linestyle='--', alpha=0.6)
-        plt.tight_layout()
-        
-        print("Visualization created successfully")
-    else:
-        print("Column 'column_name' not found or not numeric")
+    # Create the visualization directly - df is always available
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=df, x='column_name', bins=30, kde=True, color='teal')
+    plt.title('Distribution of Column Name', fontsize=16)
+    plt.xlabel('Column Name (Units)', fontsize=12)
+    plt.ylabel('Frequency', fontsize=12)
+    plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.tight_layout()
     ```
+    
+    **IMPORTANT**: 
+    - DO NOT use if/else checks for df existence
+    - DO NOT use deeply nested code blocks
+    - Keep visualization code simple and direct
+    - The df variable is ALWAYS available in the environment
     
     **Step 3: Interpret Results (Text only - NO CODE)**
     After visualization displays, provide analysis in markdown format without any code execution.
