@@ -132,49 +132,24 @@ class VisualizationHandler:
 class CustomPythonAstREPLTool(PythonAstREPLTool):
     """Custom Python AST REPL Tool that captures and displays matplotlib figures in Streamlit"""
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Ensure locals is set up properly
-        if self.locals is None:
-            self.locals = {}
-    
     def _run(self, query: str) -> str:
         """Run the query in the Python REPL and capture the result."""
         try:
-            # Ensure all required libraries and df are in locals before execution
-            if 'plt' not in self.locals:
-                self.locals['plt'] = plt
-            if 'sns' not in self.locals:
-                self.locals['sns'] = sns
-            if 'np' not in self.locals:
-                self.locals['np'] = np
-            if 'pd' not in self.locals:
-                self.locals['pd'] = pd
+            if self.locals is None:
+                self.locals = {}
             
-            # Debug: Check if df exists
-            if 'df' not in self.locals:
-                return "❌ Error: DataFrame 'df' is not available in the execution context. Please reload the data."
-            
-            # Execute the code using parent method
             result = super()._run(query)
             
-            # Capture the matplotlib figure if one was created
             if plt.get_fignums():
                 current_fig = plt.gcf()
-                
-                # Display the figure
                 st.pyplot(current_fig)
-                
-                # Close the figure to prevent re-rendering
                 plt.close(current_fig)
-                
-                # Add a success message to the result
-                result += "\n\n✅ Visualization successfully displayed."
+                result += "\n\nVisualization successfully displayed."
             
             return result
         
         except Exception as e:
-            error_message = f"❌ Error executing code: {str(e)}"
+            error_message = f"Error executing code: {str(e)}"
             st.error(error_message)
             return error_message
 
@@ -324,12 +299,6 @@ class LLMAgent:
 You are an expert data analyst with deep experience across industries. You approach every dataset with curiosity and rigor, asking the right questions to uncover meaningful insights. Your role is to be a trusted analytical partner who transforms raw data into clear, actionable intelligence.
 
     which is a data analysis and visualization expert that helps users analyze CSV data using Python, pandas, and matplotlib.
-    
-    **CRITICAL ENVIRONMENT SETUP:**
-    - The DataFrame 'df' is ALWAYS pre-loaded and available in your Python environment
-    - Libraries are pre-imported: plt (matplotlib.pyplot), sns (seaborn), pd (pandas), np (numpy)
-    - You can use these directly without checking if they exist
-    - When creating visualizations, keep code simple and flat (no deep nesting or complex conditionals)
     
     You have access to a pandas DataFrame named 'df' with the following columns:
     {df_schema}
@@ -701,13 +670,15 @@ class DataAnalysisAgent(LLMAgent):
     1. Run validation protocol above
     2. Use only validated pandas operations with error handling:
     ```python
-    # Direct column access - df is always available
-    result = df['column_name'].describe()
-    print(result)
+    # Always verify columns exist
+    if 'column_name' in df.columns:
+        result = df['column_name'].describe()
+    else:
+        print("Column 'column_name' not found")
     
-    # Group operations
-    result = df.groupby('group_col')['value_col'].agg(['mean', 'count'])
-    print(result)
+    # Group operations with verification
+    if all(col in df.columns for col in ['group_col', 'value_col']):
+        result = df.groupby('group_col')['value_col'].agg(['mean', 'count'])
     ```
     3. Report exact numerical findings only
     4. **NO visualizations unless explicitly requested**
@@ -717,26 +688,19 @@ class DataAnalysisAgent(LLMAgent):
     
     **CRITICAL: Only execute visualization code ONCE. Do NOT retry or regenerate plots.**
     
-    **CODE FORMATTING REQUIREMENTS:**
-    - Use 4-space indentation consistently
-    - NO tabs, only spaces
-    - Keep code simple and flat (minimal nesting)
-    - Always put imports at the very top
-    - Use df directly without existence checks
-    - Avoid complex conditional logic in visualization code
-    
     **Distribution (Numeric):**
     ```python
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=df, x='column', bins=30, kde=True, color='teal')
-    plt.title('Distribution of column', fontsize=16)
-    plt.xlabel('Column Name', fontsize=12)
-    plt.ylabel('Frequency', fontsize=12)
-    plt.grid(axis='y', linestyle='--', alpha=0.6)
-    plt.tight_layout()
+    if 'column' in df.columns and df['column'].dtype in ['int64', 'float64']:
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=df, x='column', bins=30, kde=True, color='teal')
+        plt.title(f'Distribution of column', fontsize=16)
+        plt.xlabel('Column Name', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.grid(axis='y', linestyle='--', alpha=0.6)
+        plt.tight_layout()
     ```
     
     **Categories (Top 10 only):**
@@ -744,12 +708,13 @@ class DataAnalysisAgent(LLMAgent):
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    top_10 = df['column'].value_counts().head(10)
-    plt.figure(figsize=(10, 6))
-    sns.barplot(x=top_10.values, y=top_10.index, palette='viridis')
-    plt.title('Top 10 Values in column', fontsize=16)
-    plt.xlabel('Count', fontsize=12)
-    plt.tight_layout()
+    if 'column' in df.columns:
+        top_10 = df['column'].value_counts().head(10)
+        plt.figure(figsize=(10, 6))
+        sns.barplot(x=top_10.values, y=top_10.index, palette='viridis')
+        plt.title(f'Top 10 Values in column', fontsize=16)
+        plt.xlabel('Count', fontsize=12)
+        plt.tight_layout()
     ```
     
     **Correlation Matrix:**
@@ -758,11 +723,12 @@ class DataAnalysisAgent(LLMAgent):
     import seaborn as sns
     
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    corr_data = df[numeric_cols].corr()
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(corr_data, annot=True, fmt='.2f', cmap='coolwarm', vmin=-1, vmax=1, square=True)
-    plt.title('Correlation Matrix', fontsize=16)
-    plt.tight_layout()
+    if len(numeric_cols) >= 2:
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(df[numeric_cols].corr(), annot=True, fmt='.2f', 
+                    cmap='coolwarm', vmin=-1, vmax=1, square=True)
+        plt.title('Correlation Matrix', fontsize=16)
+        plt.tight_layout()
     ```
     
     **Scatter Plot:**
@@ -770,13 +736,15 @@ class DataAnalysisAgent(LLMAgent):
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x='x_col', y='y_col', alpha=0.6)
-    plt.title('x_col vs y_col', fontsize=16)
-    plt.xlabel('X Column', fontsize=12)
-    plt.ylabel('Y Column', fontsize=12)
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.tight_layout()
+    if all(col in df.columns for col in ['x_col', 'y_col']):
+        if all(df[col].dtype in ['int64', 'float64'] for col in ['x_col', 'y_col']):
+            plt.figure(figsize=(10, 6))
+            sns.scatterplot(data=df, x='x_col', y='y_col', alpha=0.6)
+            plt.title(f'x_col vs y_col', fontsize=16)
+            plt.xlabel('X Column', fontsize=12)
+            plt.ylabel('Y Column', fontsize=12)
+            plt.grid(True, linestyle='--', alpha=0.6)
+            plt.tight_layout()
     ```
     
     **IMPORTANT VISUALIZATION RULES:**
@@ -789,8 +757,6 @@ class DataAnalysisAgent(LLMAgent):
     ## CRITICAL CONSTRAINTS
     
     ### MUST DO:
-    - ✅ The DataFrame 'df' is ALWAYS available in your Python environment - use it directly
-    - ✅ matplotlib (plt), seaborn (sns), pandas (pd), and numpy (np) are pre-imported
     - ✅ Validate all columns exist before use
     - ✅ Use try-except for operations that might fail
     - ✅ Report specific numbers from actual calculations
@@ -815,12 +781,13 @@ class DataAnalysisAgent(LLMAgent):
     ## ERROR HANDLING TEMPLATE
     ```python
     try:
-        result = df['required_column'].operation()
-        print(f"Result: {result}")
-    except KeyError:
-        print("Column not found in dataset")
+        if 'required_column' in df.columns:
+            result = df['required_column'].operation()
+            print(f"Result: result")
+        else:
+            print("Required column not found in dataset")
     except Exception as e:
-        print(f"Analysis error: {e}")
+        print(f"Analysis error: e")
     ```
     
     ## RESPONSE STRUCTURE
@@ -860,32 +827,27 @@ class DataAnalysisAgent(LLMAgent):
     ```
     
     **Step 2: Create ONE Visualization (Execute ONCE)**
-    
-    CRITICAL FORMATTING RULES:
-    - Use consistent 4-space indentation (NO TABS)
-    - Keep code blocks simple and flat (avoid deep nesting)
-    - Always use `df` directly without checking if it exists first
-    - Put imports on separate lines at the very start
-    
     ```python
     import matplotlib.pyplot as plt
     import seaborn as sns
     
-    # Create the visualization directly - df is always available
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=df, x='column_name', bins=30, kde=True, color='teal')
-    plt.title('Distribution of Column Name', fontsize=16)
-    plt.xlabel('Column Name (Units)', fontsize=12)
-    plt.ylabel('Frequency', fontsize=12)
-    plt.grid(axis='y', linestyle='--', alpha=0.6)
-    plt.tight_layout()
+    # Validate column exists
+    if 'column_name' in df.columns and df['column_name'].dtype in ['int64', 'float64']:
+        # Create the visualization
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=df, x='column_name', bins=30, kde=True, color='teal')
+        
+        # Professional styling
+        plt.title('Distribution of Column Name', fontsize=16)
+        plt.xlabel('Column Name (Units)', fontsize=12)
+        plt.ylabel('Frequency', fontsize=12)
+        plt.grid(axis='y', linestyle='--', alpha=0.6)
+        plt.tight_layout()
+        
+        print("Visualization created successfully")
+    else:
+        print("Column 'column_name' not found or not numeric")
     ```
-    
-    **IMPORTANT**: 
-    - DO NOT use if/else checks for df existence
-    - DO NOT use deeply nested code blocks
-    - Keep visualization code simple and direct
-    - The df variable is ALWAYS available in the environment
     
     **Step 3: Interpret Results (Text only - NO CODE)**
     After visualization displays, provide analysis in markdown format without any code execution.
@@ -924,8 +886,7 @@ class DataAnalysisAgent(LLMAgent):
         """Set up the CSV agent with OpenRouter LLM."""
         # Create system prompt with dataframe schema
         df_schema = "\n".join([f"- {col} ({self.df[col].dtype})" for col in self.df.columns])
-        # Replace the placeholder with actual schema
-        system_prompt = self.SYSTEM_TEMPLATE.replace("{df_schema}", df_schema)
+        system_prompt = self.SYSTEM_TEMPLATE.format(df_schema=df_schema)
         
         # Make sure LLM is initialized
         if not self.llm and not self.initialize_llm():
@@ -935,14 +896,8 @@ class DataAnalysisAgent(LLMAgent):
             # Initialize conversation memory
             memory = ConversationBufferMemory(memory_key="chat_history")
             
-            # Create shared execution context that persists across tool calls
-            shared_locals = VisualizationHandler.get_execution_context(self.df)
-            
-            # Store reference for later access
-            self.shared_locals = shared_locals
-            
-            # Create custom Python REPL tool with shared context
-            python_repl_tool = CustomPythonAstREPLTool(locals=shared_locals)
+            # Create custom Python REPL tool with the dataframe
+            python_repl_tool = CustomPythonAstREPLTool(locals=VisualizationHandler.get_execution_context(self.df))
             
             # Create CSV agent with Python REPL tool
             self.agent = create_csv_agent(
@@ -951,16 +906,13 @@ class DataAnalysisAgent(LLMAgent):
                 verbose=True, 
                 agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
                 handle_parsing_errors=True,
+                memory=memory,
                 prefix=system_prompt,
                 allow_dangerous_code=True,
                 extra_tools=[python_repl_tool],
-                max_iterations=10,
-                max_execution_time=90,
-                early_stopping_method="generate",
-                agent_executor_kwargs={
-                    "handle_parsing_errors": True,
-                    "return_intermediate_steps": False
-                }
+                max_iterations=8,
+                max_execution_time=60,
+                early_stopping_method="generate"
             )
 
             return self.agent
@@ -975,21 +927,8 @@ class DataAnalysisAgent(LLMAgent):
             st_callback = StreamlitCallbackHandler(st.container())
             
             try:
-                # AgentExecutor expects just the input string or dict with 'input' key
-                # Try different invocation methods based on agent type
-                try:
-                    # Method 1: Direct string (for older agents)
-                    if hasattr(self.agent, 'run'):
-                        raw_response = self.agent.run(prompt)
-                    else:
-                        # Method 2: Dictionary with input key
-                        result = self.agent.invoke({"input": prompt})
-                        raw_response = result.get('output', str(result)) if isinstance(result, dict) else str(result)
-                except Exception as invoke_error:
-                    # Method 3: Try with Agent's __call__ method
-                    result = self.agent(prompt)
-                    raw_response = result if isinstance(result, str) else str(result)
-                    
+                # First try with the callback
+                raw_response = self.agent.run(prompt, callbacks=[st_callback])
             except ValueError as e:
                 # Handle parsing errors more robustly
                 error_msg = str(e)
@@ -1004,15 +943,20 @@ class DataAnalysisAgent(LLMAgent):
                     raw_response = self._extract_response_from_error(error_msg)
                     
                     if not raw_response:
-                        # Final fallback: direct LLM call
-                        raw_response = self._direct_llm_fallback(prompt)
+                        # Fallback: try without callbacks and with simplified prompt
+                        st.info("Retrying with simplified processing...")
+                        try:
+                            raw_response = self.agent.run(prompt)
+                        except:
+                            # Final fallback: direct LLM call
+                            raw_response = self._direct_llm_fallback(prompt)
                 else:
-                    # For other errors, use direct LLM fallback
-                    raw_response = self._direct_llm_fallback(prompt)
+                    # For other errors, try without the callback
+                    raw_response = self.agent.run(prompt)
             
             except Exception as inner_e:
                 # If agent fails completely, use direct LLM
-                st.warning(f"Using direct analysis mode due to: {str(inner_e)[:100]}")
+                st.warning("Using direct analysis mode...")
                 raw_response = self._direct_llm_fallback(prompt)
             
             # Process response for visualization
@@ -1028,7 +972,7 @@ class DataAnalysisAgent(LLMAgent):
             st.error(f"Error processing your question: {error_msg}")
             
             # Try to extract useful information from the error
-            if "agent_scratchpad" in error_msg or "input keys" in error_msg:
+            if "agent_scratchpad" in error_msg:
                 st.warning("The AI had difficulty processing your request with the available data.")
                 st.info("Try asking a simpler question or provide more context.")
             
@@ -1144,7 +1088,7 @@ class DataFrameUtils:
         st.markdown("<h3 style='text-align: center;'>Dataset Overview</h3>", unsafe_allow_html=True)
         # Show sample data in expander
         with st.expander("View sample data"):
-            st.dataframe(df.head(), width='stretch')
+            st.dataframe(df.head(), use_container_width=True)
         
 class DataApp:
     """Main application class that orchestrates all components"""
