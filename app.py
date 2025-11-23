@@ -972,8 +972,15 @@ class DataAnalysisAgent(LLMAgent):
             st_callback = StreamlitCallbackHandler(st.container())
             
             try:
-                # First try with the callback
-                raw_response = self.agent.run(prompt, callbacks=[st_callback])
+                # Use invoke method with proper input format
+                raw_response = self.agent.invoke(
+                    {"input": prompt},
+                    {"callbacks": [st_callback]}
+                )
+                # Extract the output from the response
+                if isinstance(raw_response, dict):
+                    raw_response = raw_response.get('output', str(raw_response))
+                    
             except ValueError as e:
                 # Handle parsing errors more robustly
                 error_msg = str(e)
@@ -988,16 +995,18 @@ class DataAnalysisAgent(LLMAgent):
                     raw_response = self._extract_response_from_error(error_msg)
                     
                     if not raw_response:
-                        # Fallback: try without callbacks and with simplified prompt
+                        # Fallback: try without callbacks
                         st.info("Retrying with simplified processing...")
                         try:
-                            raw_response = self.agent.run(prompt)
+                            result = self.agent.invoke({"input": prompt})
+                            raw_response = result.get('output', str(result)) if isinstance(result, dict) else str(result)
                         except:
                             # Final fallback: direct LLM call
                             raw_response = self._direct_llm_fallback(prompt)
                 else:
                     # For other errors, try without the callback
-                    raw_response = self.agent.run(prompt)
+                    result = self.agent.invoke({"input": prompt})
+                    raw_response = result.get('output', str(result)) if isinstance(result, dict) else str(result)
             
             except Exception as inner_e:
                 # If agent fails completely, use direct LLM
