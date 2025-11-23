@@ -7,6 +7,8 @@ import re
 from tempfile import NamedTemporaryFile
 import matplotlib.pyplot as plt
 import numpy as np
+import requests
+import json
 
 # LangChain Imports
 from langchain_experimental.agents import create_csv_agent
@@ -14,16 +16,8 @@ from langchain.agents.agent_types import AgentType
 from langchain.memory import ConversationBufferMemory
 from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
 from langchain.chains.conversation.memory import ConversationBufferWindowMemory
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_experimental.tools import PythonAstREPLTool
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-# Get Google API key from environment
-import os
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+from langchain_community.chat_models import ChatOpenAI
 
 class CodeUtils:
     """Utility class for code extraction and execution"""
@@ -50,11 +44,9 @@ class CodeUtils:
             capture = False
             
             for line in lines:
-                # Start capturing when we see typical code patterns
                 if "df[" in line or "plt." in line or ".plot" in line:
                     capture = True
                 
-                # Stop capturing when we hit text that looks like a sentence
                 if capture and line and line[0].isupper() and "." in line and not any(x in line for x in ["df", "plt", "pd", "np", "import"]):
                     break
                 
@@ -69,15 +61,9 @@ class CodeUtils:
     @staticmethod
     def remove_code_from_response(response, code):
         """Remove the executed code from the response text"""
-        # Pattern 1: Remove python code blocks
         cleaned = re.sub(r"```python\n.*?```", "", response, flags=re.DOTALL)
-        
-        # Pattern 2: Remove python_repl_ast sections
         cleaned = re.sub(r"Action: python_repl_ast\nAction Input: .*?(?=\n[A-Z]|$)", "", cleaned, flags=re.DOTALL)
-        
-        # Remove any double newlines that might be left
         cleaned = re.sub(r"\n\n+", "\n\n", cleaned)
-        
         return cleaned.strip()
     
     @staticmethod
@@ -110,38 +96,26 @@ class VisualizationHandler:
     def execute_visualization_code(code, df=None, display=True):
         """Execute visualization code and optionally display in Streamlit"""
         try:
-            # Sanitize code
             code = CodeUtils.sanitize_code(code)
-            
-            # Close any existing figures to prevent duplicates
             plt.close('all')
-            
-            # Create a new figure
             fig, ax = plt.subplots(figsize=(10, 6))
             
-            # Get execution context
             exec_globals = VisualizationHandler.get_execution_context(df)
             exec_globals.update({
                 'ax': ax,
                 'fig': fig
             })
             
-            # Execute the code
             exec(code, exec_globals)
-            
-            # Add styling improvements
             plt.tight_layout()
             
-            # Check if we need to rotate x-axis labels
             if hasattr(ax, 'get_xticklabels') and ax.get_xticklabels():
                 longest_label = max([len(str(label.get_text())) for label in ax.get_xticklabels()])
                 if longest_label > 5:
                     plt.xticks(rotation=45, ha='right')
             
-            # Display the figure if requested
             if display:
                 st.pyplot(fig)
-                # Close the figure after displaying to prevent re-rendering
                 plt.close(fig)
                 
             return True, "Visualization successfully displayed."
@@ -159,24 +133,15 @@ class CustomPythonAstREPLTool(PythonAstREPLTool):
     def _run(self, query: str) -> str:
         """Run the query in the Python REPL and capture the result."""
         try:
-            # Ensure locals is initialized
             if self.locals is None:
                 self.locals = {}
             
-            # Execute the code using parent method
             result = super()._run(query)
             
-            # Capture the matplotlib figure if one was created
             if plt.get_fignums():
                 current_fig = plt.gcf()
-                
-                # Display the figure
                 st.pyplot(current_fig)
-                
-                # Close the figure to prevent re-rendering
                 plt.close(current_fig)
-                
-                # Add a success message to the result
                 result += "\n\nVisualization successfully displayed."
             
             return result
@@ -192,34 +157,29 @@ class ResponseProcessor:
     
     def __init__(self, df):
         self.df = df
-        self.visualization_executed = False  # Track if visualization was already executed
+        self.visualization_executed = False
     
     def process_response(self, response):
         """Process agent response to execute Python code visualizations."""
         
-        # If a visualization was already executed in this response, skip
         if self.visualization_executed:
-            self.visualization_executed = False  # Reset for next response
+            self.visualization_executed = False
             return response
         
-        # Look for Python code in the response
         python_code = CodeUtils.extract_code_from_response(response)
         
         if python_code:
             try:
-                # Execute the Python code only once
                 success, message = VisualizationHandler.execute_visualization_code(python_code, self.df)
                 
                 if success:
                     self.visualization_executed = True
                 
-                # Clean up response by removing the executed code
                 cleaned_response = CodeUtils.remove_code_from_response(response, python_code)
                 return cleaned_response
             except Exception as e:
                 st.error(f"Error executing Python code: {str(e)}")
         
-        # No Python code found or execution failed
         return response
 
 
@@ -231,7 +191,6 @@ class LLMVisualizer:
     
     def generate_visualization(self, query, llm):
         """Generate visualization code using LLM based on user query and dataframe columns"""
-        # Create a prompt with column information
         columns_info = "\n".join([f"- {col} ({self.df[col].dtype})" for col in self.df.columns])
         
         visualization_prompt = f"""
@@ -264,9 +223,7 @@ class LLMVisualizer:
         """
         
         try:
-            # Get code from LLM
             response = llm.invoke(visualization_prompt)
-            # Extract the actual code
             code = CodeUtils.extract_code_from_response(response.content)
             return code
         except Exception as e:
@@ -599,30 +556,33 @@ Remember: You're not just running calculations - you're a thought partner helpin
 This framework ensures natural, helpful data analysis responses that match the user's actual needs rather than forcing every answer into the same rigid template.
     """
     
-    def __init__(self, google_api_key=None):
-        self.google_api_key = google_api_key
+    def __init__(self, openrouter_api_key=None, model=None):
+        self.openrouter_api_key = openrouter_api_key
+        self.model = model or "x-ai/grok-4.1-fast:free"
         self.memory = ConversationBufferWindowMemory(k=3, memory_key="chat_history", return_messages=True)
-        self.google_chat = None
         self.llm = None
     
     def initialize_llm(self):
-        """Initialize the LLM with API key"""
-        if not self.google_api_key:
+        """Initialize the LLM with OpenRouter API"""
+        if not self.openrouter_api_key:
             return False
             
         try:
-            self.google_chat = ChatGoogleGenerativeAI(
-                model="gemini-flash-lite-latest",
-                google_api_key=self.google_api_key,
+            # Use ChatOpenAI with OpenRouter base URL
+            self.llm = ChatOpenAI(
+                model=self.model,
+                openai_api_key=self.openrouter_api_key,
+                openai_api_base="https://openrouter.ai/api/v1",
                 temperature=0.7,
                 max_tokens=None,
-                timeout=None,
-                max_retries=2
+                default_headers={
+                    "HTTP-Referer": "http://localhost:8501",
+                    "X-Title": "Analyzia Data Analysis"
+                }
             )
-            self.llm = self.google_chat
             return True
         except Exception as e:
-            st.error(f"Error initializing Google Gemini LLM: {str(e)}")
+            st.error(f"Error initializing OpenRouter LLM: {str(e)}")
             return False
 
 
@@ -792,38 +752,6 @@ class DataAnalysisAgent(LLMAgent):
     7. **Limitations & Assumptions** (data constraints and caveats)
     8. **Future Analysis Opportunities** (suggested follow-up questions)
     
-    ## COMPREHENSIVE REPORTING REQUIREMENTS
-    
-    ### For Every Response, Include:
-    - **Why**: Explain the reasoning behind findings and recommendations
-    - **How**: Describe the analytical approach and methodology used
-    - **What**: Present specific numerical results and evidence
-    - **So What**: Translate findings into business implications
-    - **Now What**: Provide actionable next steps and recommendations
-    
-    ### Analysis Approach (Adapt Based on Question):
-    
-    **For Simple Questions:**
-    - Answer directly with the specific fact or number
-    - Add brief context only if it clarifies the answer
-    - Example: "The dataset has 5,110 rows and 12 columns."
-    
-    **For Analytical Questions:**
-    - Provide the specific analysis requested
-    - Include relevant statistics and evidence
-    - Explain what the numbers mean in practical terms
-    - Suggest next steps if valuable
-    
-    **For Complex/Exploratory Questions:**
-    - Use the comprehensive template structure
-    - Compare results against relevant benchmarks
-    - Identify and explain anomalies or outliers
-    - Discuss statistical significance when relevant
-    - Provide context for numerical findings
-    - Suggest practical applications and follow-ups
-    
-    **Key Principle:** Be helpful and thorough, but don't over-deliver structure when simplicity serves better.
-    
     Follow these protocols exactly to ensure reliable, accurate, and comprehensive analysis reporting.
        
     ## EXECUTION PROTOCOL
@@ -900,14 +828,14 @@ class DataAnalysisAgent(LLMAgent):
     ALWAYS end with a "Final Answer:" when using tools.
 """
     
-    def __init__(self, df, response_processor, google_api_key=None):
-        super().__init__(google_api_key)
+    def __init__(self, df, response_processor, openrouter_api_key=None, model=None):
+        super().__init__(openrouter_api_key, model)
         self.df = df
         self.response_processor = response_processor
         self.agent = None
     
     def setup_agent(self, file_path):
-        """Set up the CSV agent with Groq LLM."""
+        """Set up the CSV agent with OpenRouter LLM."""
         # Create system prompt with dataframe schema
         df_schema = "\n".join([f"- {col} ({self.df[col].dtype})" for col in self.df.columns])
         system_prompt = self.SYSTEM_TEMPLATE.format(df_schema=df_schema)
@@ -956,7 +884,6 @@ class DataAnalysisAgent(LLMAgent):
             except ValueError as e:
                 # Handle parsing errors more robustly
                 error_msg = str(e)
-                # st.warning("Processing response with error recovery...")
                 
                 # Enhanced parsing error handling
                 if any(phrase in error_msg for phrase in [
@@ -1021,7 +948,6 @@ class DataAnalysisAgent(LLMAgent):
             return match.group(1).strip()
         
         # Strategy 3: Look for actual analysis content in the error
-        # Sometimes the error contains the actual analysis wrapped in error text
         lines = error_msg.split('\n')
         content_lines = []
         capturing = False
@@ -1125,7 +1051,7 @@ class DataApp:
         self.response_processor = None
         self.analysis_agent = None
         
-    def process_uploaded_file(self, file, google_api_key=None):
+    def process_uploaded_file(self, file, openrouter_api_key=None, model=None):
         """Process the uploaded CSV file and return dataframe and file path."""
         with st.spinner("Loading dataset..."):
             try:
@@ -1144,7 +1070,7 @@ class DataApp:
                 
                 # Initialize components
                 self.response_processor = ResponseProcessor(self.df)
-                self.analysis_agent = DataAnalysisAgent(self.df, self.response_processor, google_api_key)
+                self.analysis_agent = DataAnalysisAgent(self.df, self.response_processor, openrouter_api_key, model)
                 
                 return self.df
                 
@@ -1250,17 +1176,31 @@ class DataApp:
             st.markdown("---")
             
             # API Key section
-            st.markdown("### API Configuration")
-            if GOOGLE_API_KEY:
-                st.success("API Key configured")
-                google_api_key = GOOGLE_API_KEY
-            else:
-                google_api_key = st.text_input("Google API Key", type="password", placeholder="Enter your API key...")
+            st.markdown("### 🔑 API Configuration")
+            openrouter_api_key = st.text_input(
+                "OpenRouter API Key", 
+                type="password", 
+                placeholder="Enter your API key...",
+                help="Get your API key from https://openrouter.ai/keys"
+            )
+            
+            # Model selection
+            st.markdown("### 🤖 Model Selection")
+            selected_model = st.selectbox(
+                "Choose AI Model",
+                [
+                    "x-ai/grok-4.1-fast:free",
+                    "meta-llama/llama-3.2-3b-instruct:free",
+                    "openai/gpt-oss-20b:free",
+                    "deepseek/deepseek-chat-v3-0324:free"
+                ],
+                help="Select the AI model for data analysis"
+            )
             
             st.markdown("---")
             
             # File upload section
-            st.markdown("### Data Upload")
+            st.markdown("### 📁 Data Upload")
             uploaded_file = st.file_uploader("Choose CSV file", type=["csv"], label_visibility="collapsed")
         
         # Initialize or reset session state if needed
@@ -1269,17 +1209,18 @@ class DataApp:
         
         # Process file if uploaded
         if uploaded_file and (self.df is None or uploaded_file.name != getattr(st.session_state, 'last_file', None)):
-            self.process_uploaded_file(uploaded_file, google_api_key)
+            self.process_uploaded_file(uploaded_file, openrouter_api_key, selected_model)
             st.session_state.last_file = uploaded_file.name if self.df is not None else None
             
             # Reset chat history when new file is uploaded
             st.session_state.messages = []
         
         # Setup agent if conditions are met
-        if self.df is not None and google_api_key:
+        if self.df is not None and openrouter_api_key:
             if self.analysis_agent and self.analysis_agent.agent is None:
-                # Update API key if changed
-                self.analysis_agent.google_api_key = google_api_key
+                # Update API key and model if changed
+                self.analysis_agent.openrouter_api_key = openrouter_api_key
+                self.analysis_agent.model = selected_model
                 self.analysis_agent.setup_agent(self.file_path)
         
         # Main content area - always show chat interface with title
@@ -1298,7 +1239,7 @@ class DataApp:
             DataFrameUtils.display_dataframe_info(self.df)
         
         # Display status information if setup is incomplete
-        if not uploaded_file and not google_api_key:
+        if not uploaded_file and not openrouter_api_key:
             # Welcome screen when nothing is set up
             st.markdown("""
             <div style="text-align: center; padding: 1rem 0;">
@@ -1315,11 +1256,11 @@ class DataApp:
                 </p>
             </div>
             """, unsafe_allow_html=True)
-        elif not google_api_key:
+        elif not openrouter_api_key:
             st.markdown("""
             <div style="text-align: center; padding: 1rem 0;">
                 <p style="color: #0066cc; background-color: #e6f3ff; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #0066cc; margin: 0 auto; max-width: 600px;">
-                    🔑 Please enter your Google API key in the sidebar to start analyzing your data.
+                    🔑 Please enter your OpenRouter API key in the sidebar to start analyzing your data.
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -1353,7 +1294,7 @@ I'd love to help you analyze your data, but I don't see any dataset uploaded yet
 
 **To get started:**
 1. 📁 Upload a CSV file using the sidebar
-2. 🔑 Enter your Google API key in the sidebar
+2. 🔑 Enter your OpenRouter API key in the sidebar
 3. 🚀 Ask your question again
 
 Once you've uploaded your data, I can help you with:
@@ -1365,14 +1306,14 @@ Once you've uploaded your data, I can help you with:
                     st.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
                 
-                elif not google_api_key:
+                elif not openrouter_api_key:
                     response = """
 🔑 **API Key Required**
 
-I can see your dataset, but I need a Google API key to analyze it for you.
+I can see your dataset, but I need an OpenRouter API key to analyze it for you.
 
 **To continue:**
-1. 🔑 Enter your Google API key in the sidebar (you can get one from Google AI Studio)
+1. 🔑 Enter your OpenRouter API key in the sidebar (get one from https://openrouter.ai/keys)
 2. 🚀 Ask your question again
 
 Your data is ready - I just need the API key to start the analysis!
