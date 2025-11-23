@@ -135,16 +135,35 @@ class CustomPythonAstREPLTool(PythonAstREPLTool):
     def _run(self, query: str) -> str:
         """Run the query in the Python REPL and capture the result."""
         try:
+            # Ensure locals is initialized and persistent
             if self.locals is None:
                 self.locals = {}
             
+            # Make sure matplotlib and seaborn are always available
+            if 'plt' not in self.locals:
+                self.locals['plt'] = plt
+            if 'sns' not in self.locals:
+                self.locals['sns'] = sns
+            if 'np' not in self.locals:
+                self.locals['np'] = np
+            if 'pd' not in self.locals:
+                self.locals['pd'] = pd
+            
+            # Execute the code using parent method
             result = super()._run(query)
             
+            # Capture the matplotlib figure if one was created
             if plt.get_fignums():
                 current_fig = plt.gcf()
+                
+                # Display the figure
                 st.pyplot(current_fig)
+                
+                # Close the figure to prevent re-rendering
                 plt.close(current_fig)
-                result += "\n\nVisualization successfully displayed."
+                
+                # Add a success message to the result
+                result += "\n\n✅ Visualization successfully displayed."
             
             return result
         
@@ -757,6 +776,8 @@ class DataAnalysisAgent(LLMAgent):
     ## CRITICAL CONSTRAINTS
     
     ### MUST DO:
+    - ✅ The DataFrame 'df' is ALWAYS available in your Python environment - use it directly
+    - ✅ matplotlib (plt), seaborn (sns), pandas (pd), and numpy (np) are pre-imported
     - ✅ Validate all columns exist before use
     - ✅ Use try-except for operations that might fail
     - ✅ Report specific numbers from actual calculations
@@ -896,8 +917,14 @@ class DataAnalysisAgent(LLMAgent):
             # Initialize conversation memory
             memory = ConversationBufferMemory(memory_key="chat_history")
             
-            # Create custom Python REPL tool with the dataframe
-            python_repl_tool = CustomPythonAstREPLTool(locals=VisualizationHandler.get_execution_context(self.df))
+            # Create shared execution context that persists across tool calls
+            shared_locals = VisualizationHandler.get_execution_context(self.df)
+            
+            # Store reference for later access
+            self.shared_locals = shared_locals
+            
+            # Create custom Python REPL tool with shared context
+            python_repl_tool = CustomPythonAstREPLTool(locals=shared_locals)
             
             # Create CSV agent with Python REPL tool
             self.agent = create_csv_agent(
@@ -910,8 +937,8 @@ class DataAnalysisAgent(LLMAgent):
                 prefix=system_prompt,
                 allow_dangerous_code=True,
                 extra_tools=[python_repl_tool],
-                max_iterations=8,
-                max_execution_time=60,
+                max_iterations=10,
+                max_execution_time=90,
                 early_stopping_method="generate"
             )
 
@@ -1088,7 +1115,7 @@ class DataFrameUtils:
         st.markdown("<h3 style='text-align: center;'>Dataset Overview</h3>", unsafe_allow_html=True)
         # Show sample data in expander
         with st.expander("View sample data"):
-            st.dataframe(df.head(), use_container_width=True)
+            st.dataframe(df.head(), width='stretch')
         
 class DataApp:
     """Main application class that orchestrates all components"""
