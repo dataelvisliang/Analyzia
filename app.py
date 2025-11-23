@@ -951,13 +951,16 @@ class DataAnalysisAgent(LLMAgent):
                 verbose=True, 
                 agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
                 handle_parsing_errors=True,
-                memory=memory,
                 prefix=system_prompt,
                 allow_dangerous_code=True,
                 extra_tools=[python_repl_tool],
                 max_iterations=10,
                 max_execution_time=90,
-                early_stopping_method="generate"
+                early_stopping_method="generate",
+                agent_executor_kwargs={
+                    "handle_parsing_errors": True,
+                    "return_intermediate_steps": False
+                }
             )
 
             return self.agent
@@ -972,14 +975,20 @@ class DataAnalysisAgent(LLMAgent):
             st_callback = StreamlitCallbackHandler(st.container())
             
             try:
-                # Use invoke method with proper input format
-                raw_response = self.agent.invoke(
-                    {"input": prompt},
-                    {"callbacks": [st_callback]}
-                )
-                # Extract the output from the response
-                if isinstance(raw_response, dict):
-                    raw_response = raw_response.get('output', str(raw_response))
+                # AgentExecutor expects just the input string or dict with 'input' key
+                # Try different invocation methods based on agent type
+                try:
+                    # Method 1: Direct string (for older agents)
+                    if hasattr(self.agent, 'run'):
+                        raw_response = self.agent.run(prompt)
+                    else:
+                        # Method 2: Dictionary with input key
+                        result = self.agent.invoke({"input": prompt})
+                        raw_response = result.get('output', str(result)) if isinstance(result, dict) else str(result)
+                except Exception as invoke_error:
+                    # Method 3: Try with Agent's __call__ method
+                    result = self.agent(prompt)
+                    raw_response = result if isinstance(result, str) else str(result)
                     
             except ValueError as e:
                 # Handle parsing errors more robustly
@@ -995,22 +1004,15 @@ class DataAnalysisAgent(LLMAgent):
                     raw_response = self._extract_response_from_error(error_msg)
                     
                     if not raw_response:
-                        # Fallback: try without callbacks
-                        st.info("Retrying with simplified processing...")
-                        try:
-                            result = self.agent.invoke({"input": prompt})
-                            raw_response = result.get('output', str(result)) if isinstance(result, dict) else str(result)
-                        except:
-                            # Final fallback: direct LLM call
-                            raw_response = self._direct_llm_fallback(prompt)
+                        # Final fallback: direct LLM call
+                        raw_response = self._direct_llm_fallback(prompt)
                 else:
-                    # For other errors, try without the callback
-                    result = self.agent.invoke({"input": prompt})
-                    raw_response = result.get('output', str(result)) if isinstance(result, dict) else str(result)
+                    # For other errors, use direct LLM fallback
+                    raw_response = self._direct_llm_fallback(prompt)
             
             except Exception as inner_e:
                 # If agent fails completely, use direct LLM
-                st.warning("Using direct analysis mode...")
+                st.warning(f"Using direct analysis mode due to: {str(inner_e)[:100]}")
                 raw_response = self._direct_llm_fallback(prompt)
             
             # Process response for visualization
@@ -1026,7 +1028,7 @@ class DataAnalysisAgent(LLMAgent):
             st.error(f"Error processing your question: {error_msg}")
             
             # Try to extract useful information from the error
-            if "agent_scratchpad" in error_msg:
+            if "agent_scratchpad" in error_msg or "input keys" in error_msg:
                 st.warning("The AI had difficulty processing your request with the available data.")
                 st.info("Try asking a simpler question or provide more context.")
             
