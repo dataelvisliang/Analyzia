@@ -924,7 +924,8 @@ class DataAnalysisAgent(LLMAgent):
         """Set up the CSV agent with OpenRouter LLM."""
         # Create system prompt with dataframe schema
         df_schema = "\n".join([f"- {col} ({self.df[col].dtype})" for col in self.df.columns])
-        system_prompt = self.SYSTEM_TEMPLATE.format(df_schema=df_schema)
+        # Replace the placeholder with actual schema
+        system_prompt = self.SYSTEM_TEMPLATE.replace("{df_schema}", df_schema)
         
         # Make sure LLM is initialized
         if not self.llm and not self.initialize_llm():
