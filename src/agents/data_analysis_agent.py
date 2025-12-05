@@ -3,7 +3,7 @@
 import re
 import streamlit as st
 import matplotlib.pyplot as plt
-from langchain_experimental.agents import create_csv_agent
+from langchain_experimental.agents import create_pandas_dataframe_agent
 
 from .base_agent import LLMAgent
 from ..config import SYSTEM_TEMPLATE
@@ -36,21 +36,31 @@ class DataAnalysisAgent(LLMAgent):
             self.python_repl_tool = CustomPythonAstREPLTool()
             # Set locals after initialization to avoid Pydantic issues
             self.python_repl_tool.locals = VisualizationHandler.get_execution_context(self.df)
+            self.python_repl_tool.name = "python_repl_ast"
+            self.python_repl_tool.description = (
+                "A Python shell. Use this to execute python commands. "
+                "Input should be a valid python command. "
+                "When using this tool, you can access the pandas DataFrame 'df'."
+            )
 
-            # Create CSV agent with Python REPL tool
-            self.agent = create_csv_agent(
+            # Create agent using pandas dataframe agent with ONLY our custom tool
+            # The trick: pass empty extra_tools and modify the agent's tools list after creation
+            self.agent = create_pandas_dataframe_agent(
                 self.llm,
-                file_path,
+                self.df,
                 verbose=True,
                 agent_type="zero-shot-react-description",
                 handle_parsing_errors=True,
                 prefix=system_prompt,
                 allow_dangerous_code=True,
-                extra_tools=[self.python_repl_tool],
+                extra_tools=[],
                 max_iterations=8,
                 max_execution_time=60,
                 early_stopping_method="generate"
             )
+
+            # Replace the built-in PythonAstREPLTool with our custom one
+            self.agent.tools = [self.python_repl_tool]
 
             return self.agent
 
@@ -78,9 +88,6 @@ class DataAnalysisAgent(LLMAgent):
 
                     # Clear status messages
                     status_container.empty()
-
-            # Display any pending figures captured by CustomPythonAstREPLTool
-            CustomPythonAstREPLTool.display_pending_figures()
 
             # Process response for visualization
             processed_response = self.response_processor.process_response(raw_response)

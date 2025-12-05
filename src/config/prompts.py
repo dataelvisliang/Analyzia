@@ -21,51 +21,35 @@ Final Answer: The highest rating is 5.0
 Example 2 - Visualization ("show rating over time"):
 Action: python_repl_ast
 Action Input:
-import matplotlib.pyplot as plt
+import plotly.express as px
 import pandas as pd
 
-# Data validation + visualization in ONE action
 df['REALDATE'] = pd.to_datetime(df['REALDATE'], errors='coerce')
-df_clean = df.dropna(subset=['REALDATE', 'RATING'])
-df_sorted = df_clean.sort_values('REALDATE')
+df_clean = df.dropna(subset=['REALDATE', 'RATING']).sort_values('REALDATE')
 
-plt.figure(figsize=(12, 6))
-plt.plot(df_sorted['REALDATE'], df_sorted['RATING'], marker='o', markersize=3, alpha=0.6, linewidth=1)
-plt.title('Rating Over Time')
-plt.xlabel('Date')
-plt.ylabel('Rating')
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
+fig = px.line(df_clean, x='REALDATE', y='RATING', title='Rating Over Time', markers=True)
 
 Observation: [Visualization created]
-Final Answer: I've created a line plot showing how ratings change over time. The chart displays the rating values on the y-axis and dates on the x-axis.
+Final Answer: Created an interactive line plot showing rating trends over time.
 
 Example 3 - Text analysis ("what do people discuss"):
 Action: python_repl_ast
 Action Input:
-import matplotlib.pyplot as plt
+import plotly.express as px
 from collections import Counter
 import re
+import pandas as pd
 
 df['full_text'] = (df['Summary'].fillna('') + ' ' + df['Text'].fillna('')).str.lower()
 stopwords = ['the', 'and', 'to', 'of', 'a', 'in', 'is', 'it', 'for', 'this', 'that']
-words = []
-for text in df['full_text']:
-    words.extend([w for w in re.findall(r'\w+', text) if w not in stopwords and len(w) > 2])
-
+words = [w for text in df['full_text'] for w in re.findall(r'\w+', text) if w not in stopwords and len(w) > 2]
 top_words = Counter(words).most_common(20)
-words_list, counts = zip(*top_words)
 
-plt.figure(figsize=(12, 8))
-plt.barh(range(len(words_list)), counts, color='steelblue')
-plt.yticks(range(len(words_list)), words_list)
-plt.xlabel('Frequency')
-plt.title('Top 20 Most Common Words')
-plt.gca().invert_yaxis()
-plt.tight_layout()
+word_df = pd.DataFrame(top_words, columns=['word', 'count'])
+fig = px.bar(word_df, x='count', y='word', orientation='h', title='Top 20 Words')
 
 Observation: [Visualization created]
-Final Answer: I've created a bar chart showing the top 20 most frequently used words in the text data.
+Final Answer: Created bar chart of top 20 words.
 """
 
 # Common system template (preserved from original for reference)
